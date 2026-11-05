@@ -80,7 +80,8 @@ export function scoreMove(board, placements) {
   };
   const addWord = cells => {
     if (cells.length < 2) return;
-    res.words.push({word: cells.map(([r, c]) => nb[r][c].letter).join(''), score: scoreCells(cells), cells, start: cellName(...cells[0])});
+    const bonus = cells.filter(([r, c]) => isNew[r][c] && PREMIUM[r][c]).length;
+    res.words.push({word: cells.map(([r, c]) => nb[r][c].letter).join(''), score: scoreCells(cells), cells, start: cellName(...cells[0]), bonus});
   };
   const p0 = placements[0];
   if (dir) {
@@ -100,6 +101,7 @@ export function scoreMove(board, placements) {
     if (!touchesOld) { res.error = 'Word not connected to existing tiles'; return res; }
   }
   res.bingo = placements.length === 7;
+  res.bonusSquares = placements.filter(p => PREMIUM[p.r][p.c]).length;
   res.total = res.words.reduce((s, w) => s + w.score, 0) + (res.bingo ? 50 : 0);
   res.valid = true;
   return res;
@@ -142,4 +144,49 @@ export function replay(nPlayers, history) {
     }
   }
   return {board, scores, current, turns};
+}
+
+/**
+ * Per-player stats + game awards, derived from history (every turn is replayed).
+ * players[i]: {turns, plays, passes, playPoints, avgPerTurn, bingos, bonusSquares, longestWord, bestTurn, bestWord, bestBonusWord}
+ * awards: {longestWord, bestTurn, bestWord, mostBonusInWord, mostBonusTotal, mostBingos, bestAverage} -> {players:[idx], value, detail}
+ */
+export function gameStats(nPlayers, history) {
+  const g = replay(nPlayers, history);
+  const P = Array.from({length: nPlayers}, () => ({turns: 0, plays: 0, passes: 0, playPoints: 0, avgPerTurn: 0, bingos: 0, bonusSquares: 0,
+    longestWord: null, bestTurn: null, bestWord: null, bestBonusWord: null}));
+  g.turns.forEach((t, i) => {
+    const p = P[t.player];
+    if (t.type === 'pass') { p.turns++; p.passes++; return; }
+    if (t.type !== 'play') return;
+    p.turns++;
+    if (!t.result.valid) return;
+    p.plays++; p.playPoints += t.result.total;
+    if (t.result.bingo) p.bingos++;
+    p.bonusSquares += t.result.bonusSquares;
+    const main = t.result.words.reduce((a, w) => (w.score > a.score ? w : a));
+    if (!p.bestTurn || t.result.total > p.bestTurn.score) p.bestTurn = {score: t.result.total, turn: i + 1, words: t.result.words.map(w => w.word), bingo: t.result.bingo, main: main.word};
+    for (const w of t.result.words) {
+      if (!p.longestWord || w.word.length > p.longestWord.word.length) p.longestWord = {word: w.word, length: w.word.length, turn: i + 1};
+      if (!p.bestWord || w.score > p.bestWord.score) p.bestWord = {word: w.word, score: w.score, turn: i + 1};
+      if (w.bonus && (!p.bestBonusWord || w.bonus > p.bestBonusWord.bonus)) p.bestBonusWord = {word: w.word, bonus: w.bonus, turn: i + 1};
+    }
+  });
+  P.forEach(p => { p.avgPerTurn = p.turns ? Math.round(p.playPoints / p.turns * 10) / 10 : 0; });
+  const award = (val, detail) => {
+    const vals = P.map(val); const best = Math.max(...vals);
+    if (!(best > 0)) return null;
+    const players = vals.map((v, i) => (v === best ? i : -1)).filter(i => i >= 0);
+    return {players, value: best, detail: players.map(i => detail(P[i])).join(' / ')};
+  };
+  const awards = {
+    longestWord: award(p => p.longestWord?.length || 0, p => p.longestWord.word),
+    bestTurn: award(p => p.bestTurn?.score || 0, p => p.bestTurn.words.join(', ')),
+    bestWord: award(p => p.bestWord?.score || 0, p => p.bestWord.word),
+    mostBonusInWord: award(p => p.bestBonusWord?.bonus || 0, p => p.bestBonusWord.word),
+    mostBonusTotal: award(p => p.bonusSquares, () => ''),
+    mostBingos: award(p => p.bingos, () => ''),
+    bestAverage: award(p => p.avgPerTurn, () => ''),
+  };
+  return {scores: g.scores, players: P, awards};
 }

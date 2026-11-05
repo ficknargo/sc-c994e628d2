@@ -13,11 +13,12 @@
 <section id="setup" class="screen">
   <h1>Scrabble Cam</h1>
   <p class="muted">Point your phone at the board. After each turn tap <b>Score turn</b>.</p>
-  <div id="names"></div>
-  <div class="row">
-    <button id="addPlayer" class="btn ghost">+ Player</button>
-    <button id="removePlayer" class="btn ghost">− Player</button>
+  <label>Players</label>
+  <div class="row" id="count">
+    <button class="btn ghost" data-n="2">2</button><button class="btn ghost" data-n="3">3</button><button class="btn ghost" data-n="4">4</button>
   </div>
+  <div id="names"></div>
+  <p class="muted">Turn order = this order. Points go to whoever's turn it is, then it rotates.</p>
   <button id="startGame" class="btn big primary">Start game</button>
   <button id="resumeGame" class="btn big hidden">Resume game</button>
   <button class="btn ghost openSettings">Settings / API key</button>
@@ -47,7 +48,7 @@
       <button id="undoBtn" class="btn">Undo</button>
       <button id="passBtn" class="btn">Pass</button>
       <button id="historyBtn" class="btn">History</button>
-      <button id="endBtn" class="btn">End</button>
+      <button id="endBtn" class="btn">End/Stats</button>
     </div>
   </div>
   <div id="flash" class="hidden"></div>
@@ -87,11 +88,13 @@
 </section>
 
 <section id="endgame" class="sheet hidden">
-  <div class="sheetHead"><b>End of game</b><button class="btn closeSheet">Close</button></div>
-  <p class="muted">Type each player's leftover tiles (use ? for a blank). Pick who went out.</p>
-  <div id="racks"></div>
-  <label>Went out <select id="outPlayer"></select></label>
-  <button id="applyPenalty" class="btn primary">Apply</button>
+  <div class="sheetHead"><b>End of game &amp; stats</b><button class="btn closeSheet">Close</button></div>
+  <div id="penaltyBox">
+    <p class="muted">Type each player's leftover tiles (use ? for a blank). Pick who went out.</p>
+    <div id="racks"></div>
+    <label>Went out <select id="outPlayer"></select></label>
+    <button id="applyPenalty" class="btn primary">Apply tile penalties</button>
+  </div>
   <div id="final"></div>
 </section>
 <div id="toast" class="hidden"></div>

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {scoreMove, emptyBoard, applyPlacements, replay, rackValue, PREMIUM} from '../js/scoring.js';
+import {scoreMove, emptyBoard, applyPlacements, replay, rackValue, PREMIUM, gameStats} from '../js/scoring.js';
 
 const row = (r, c0, word, blanks = []) => [...word].map((l, i) => ({r, c: c0 + i, letter: l, blank: blanks.includes(i)})).filter(p => p.letter !== '_');
 const col = (c, r0, word, blanks = []) => [...word].map((l, i) => ({r: r0 + i, c, letter: l, blank: blanks.includes(i)})).filter(p => p.letter !== '_');
@@ -100,4 +100,28 @@ test('replay: scores, rotation, adjust, end-game penalty', () => {
   assert.equal(g.current, 0);
   assert.equal(g.board[7][10].letter, 'S');
   assert.equal(rackValue('Q?z'), 20);
+});
+
+test('game stats + awards', () => {
+  const h = [
+    {type: 'play', player: 0, placements: row(7, 7, 'CAT')},          // 10, bonus 1 (DW centre)
+    {type: 'play', player: 1, placements: row(8, 8, 'OX')},           // 22: OX(10, bonus1) AO 3 TX 9
+    {type: 'play', player: 0, placements: [{r: 7, c: 10, letter: 'S'}]}, // CATS 6
+    {type: 'pass', player: 1},
+    {type: 'play', player: 0, placements: col(4, 4, 'RETAINS').map(p => p)}, // invalid here (not connected) -> 0
+  ];
+  const s = gameStats(2, h);
+  assert.deepEqual(s.scores, [16, 22]);
+  assert.equal(s.players[0].turns, 3); assert.equal(s.players[0].plays, 2);
+  assert.equal(s.players[0].avgPerTurn, 5.3); assert.equal(s.players[1].avgPerTurn, 11);
+  assert.equal(s.players[0].longestWord.word, 'CATS');
+  assert.deepEqual(s.awards.longestWord.players, [0]);
+  assert.deepEqual(s.awards.bestTurn, {players: [1], value: 22, detail: 'OX, AO, TX'});
+  assert.deepEqual(s.awards.bestWord, {players: [0, 1], value: 10, detail: 'CAT / OX'});
+  assert.equal(s.awards.mostBonusTotal.value, 1);
+  assert.equal(s.awards.mostBingos, null);
+  // bingo + double-double counts 2 bonus squares in one word
+  const s2 = gameStats(2, [{type: 'play', player: 0, placements: row(7, 1, 'RETAINS')}]); // (7,3) DL, (7,7) DW
+  assert.equal(s2.players[0].bingos, 1); assert.equal(s2.players[0].bestBonusWord.bonus, 2);
+  assert.equal(s2.awards.mostBonusInWord.detail, 'RETAINS');
 });

@@ -1,4 +1,4 @@
-import {SIZE, PREMIUM, scoreMove, replay, cellName, rackValue} from './scoring.js';
+import {SIZE, PREMIUM, scoreMove, replay, cellName, rackValue, gameStats} from './scoring.js';
 import {warp, cellFeatures, diffScores, pickNewCells, homography, applyH, packFeatures, unpackFeatures} from './geom.js';
 import {grabFrame, readCells, readBoard} from './vision.js';
 
@@ -28,9 +28,13 @@ function renderNames() {
   $('#names').innerHTML = names.map((n, i) => `<input data-i="${i}" value="${esc(n)}" placeholder="Player ${i + 1}" autocomplete="off">`).join('');
   $('#names').querySelectorAll('input').forEach(inp => inp.oninput = () => { names[+inp.dataset.i] = inp.value; });
   $('#resumeGame').classList.toggle('hidden', !game);
+  $('#count').querySelectorAll('button').forEach(b => b.classList.toggle('primary', +b.dataset.n === names.length));
 }
-$('#addPlayer').onclick = () => { if (names.length < 4) { names.push('Player ' + (names.length + 1)); renderNames(); } };
-$('#removePlayer').onclick = () => { if (names.length > 2) { names.pop(); renderNames(); } };
+$('#count').onclick = e => {
+  const n = +e.target.dataset.n; if (!n) return;
+  while (names.length < n) names.push('Player ' + (names.length + 1));
+  names.length = n; renderNames();
+};
 $('#startGame').onclick = () => {
   if (game && game.history.length && !confirm('Start a new game? The current one is discarded.')) return;
   const corners = game?.corners || null;
@@ -177,6 +181,7 @@ async function scoreTurn() {
 }
 
 function commitPlay(entry, feats, res) {
+  entry.summary = {total: res.total, bingo: res.bingo, bonusSquares: res.bonusSquares, words: res.words.map(w => ({word: w.word, score: w.score, bonus: w.bonus}))};
   entry.baselineBefore = baseline ? packFeatures(baseline) : null;
   game.history.push(entry); baseline = feats; saveGame(); render();
   flash(game.players[entry.player], res);
@@ -305,6 +310,7 @@ $('#edSave').onclick = () => {
 
 /* ---------------- End game ---------------- */
 $('#endBtn').onclick = () => {
+  $('#penaltyBox').classList.toggle('hidden', game.history.some(e => e.type === 'penalty'));
   $('#racks').innerHTML = game.players.map((p, i) => `<label>${esc(p)} <input data-i="${i}" placeholder="e.g. QE?" autocapitalize="characters"></label>`).join('');
   $('#outPlayer').innerHTML = '<option value="-1">Nobody</option>' + game.players.map((p, i) => `<option value="${i}">${esc(p)}</option>`).join('');
   showFinal(); $('#endgame').classList.remove('hidden');
@@ -312,12 +318,25 @@ $('#endBtn').onclick = () => {
 $('#applyPenalty').onclick = () => {
   const racks = [...$('#racks').querySelectorAll('input')].map(i => i.value.toUpperCase().replace(/[^A-Z?]/g, ''));
   const out = +$('#outPlayer').value;
-  game.history.push({type: 'penalty', racks, outPlayer: out}); saveGame(); render(); showFinal();
+  game.history.push({type: 'penalty', racks, outPlayer: out}); saveGame(); render(); showFinal(); $('#penaltyBox').classList.add('hidden');
   toast(racks.map((r, i) => `${game.players[i]} −${rackValue(r)}`).join(', '));
 };
 function showFinal() {
-  const st = state(), order = game.players.map((p, i) => [p, st.scores[i]]).sort((a, b) => b[1] - a[1]);
-  $('#final').innerHTML = order.map(([p, s], i) => `<div>${i === 0 ? '🏆 ' : ''}${esc(p)}: <b>${s}</b></div>`).join('');
+  const st = gameStats(game.players.length, game.history), name = i => esc(game.players[i]);
+  const order = game.players.map((p, i) => i).sort((a, b) => st.scores[b] - st.scores[a]);
+  const A = st.awards, who = a => a.players.map(name).join(' & ');
+  const aw = [
+    ['🏆 Winner', {players: [order[0]], value: st.scores[order[0]], detail: ''}, v => v + ' pts'],
+    ['📏 Longest word', A.longestWord, (v, a) => `${a.detail} (${v})`],
+    ['💥 Best turn', A.bestTurn, (v, a) => `${v} pts — ${a.detail}`],
+    ['⭐ Best single word', A.bestWord, (v, a) => `${a.detail} ${v}`],
+    ['🎯 Most bonus squares in one word', A.mostBonusInWord, (v, a) => `${a.detail} (${v})`],
+    ['🟥 Most bonus squares total', A.mostBonusTotal, v => v],
+    ['🎰 Most bingos', A.mostBingos, v => v],
+    ['📈 Best average / turn', A.bestAverage, v => v],
+  ].filter(([, a]) => a).map(([t, a, f]) => `<div class="aw"><span>${t}</span><b>${who(a)}</b><small>${esc(f(a.value, a))}</small></div>`).join('');
+  const rows = order.map(i => { const p = st.players[i]; return `<tr><td>${name(i)}</td><td><b>${st.scores[i]}</b></td><td>${p.avgPerTurn}</td><td>${p.bingos}</td><td>${p.bonusSquares}</td><td>${p.longestWord ? esc(p.longestWord.word) : '–'}</td><td>${p.bestTurn ? p.bestTurn.score : '–'}</td><td>${p.bestWord ? esc(p.bestWord.word) + ' ' + p.bestWord.score : '–'}</td></tr>`; }).join('');
+  $('#final').innerHTML = `<h3>Awards</h3>${aw}<h3>Players</h3><div class="tw"><table><tr><th></th><th>Pts</th><th>Avg</th><th>Bingo</th><th>Bonus sq</th><th>Longest</th><th>Best turn</th><th>Best word</th></tr>${rows}</table></div>`;
 }
 
 /* ---------------- Settings ---------------- */

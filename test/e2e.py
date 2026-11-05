@@ -26,6 +26,9 @@ try:
             route.fulfill(status=200, content_type='application/json', body=json.dumps({'choices': [{'message': {'content': json.dumps({'tiles': tiles})}}]}))
         pg.route('https://api.openai.com/**', handle)
         pg.goto('http://localhost:8765/index.html?test')
+        pg.click('#count button[data-n="3"]'); assert pg.locator('#names input').count() == 3
+        pg.click('#count button[data-n="2"]')
+        pg.screenshot(path='test/shots/setup.png')
         pg.evaluate("""c => localStorage.setItem('scrabblecam.game.v1', JSON.stringify({players:['Ann','Bob'],history:[],corners:c,baseline:null}))""", corners)
         pg.reload()
         pg.evaluate("window.scrabbleCam.setFrame('test/fixtures/turn0.png')")
@@ -70,6 +73,13 @@ try:
         pg.click('#flash'); pg.click('#historyBtn'); pg.screenshot(path='test/shots/4-history.png')
         print(pg.inner_text('#histList'))
         pg.click('#history .closeSheet')
+        # stats before end: then apply penalties
+        pg.click('#endBtn'); pg.fill('#racks input[data-i="0"]', ''); pg.fill('#racks input[data-i="1"]', 'QE?')
+        pg.select_option('#outPlayer', '0'); pg.click('#applyPenalty'); time.sleep(0.2)
+        print('final scores:', pg.evaluate('window.scrabbleCam.state().scores'))
+        pg.screenshot(path='test/shots/5-stats.png', full_page=True)
+        print(pg.inner_text('#final'))
+        pg.click('#endgame .closeSheet')
         pg.click('#undoBtn'); time.sleep(0.2)
         print('after undo:', pg.evaluate('window.scrabbleCam.state().scores'))
         print('api calls:', calls)
