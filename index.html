@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#14281f">
+<title>Scrabble Cam</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<section id="setup" class="screen">
+  <h1>Scrabble Cam</h1>
+  <p class="muted">Point your phone at the board. After each turn tap <b>Score turn</b>.</p>
+  <div id="names"></div>
+  <div class="row">
+    <button id="addPlayer" class="btn ghost">+ Player</button>
+    <button id="removePlayer" class="btn ghost">− Player</button>
+  </div>
+  <button id="startGame" class="btn big primary">Start game</button>
+  <button id="resumeGame" class="btn big hidden">Resume game</button>
+  <button class="btn ghost openSettings">Settings / API key</button>
+</section>
+
+<section id="game" class="screen hidden">
+  <div class="top">
+    <div id="turnLabel"></div>
+    <button class="icon openSettings" aria-label="Settings">⚙︎</button>
+  </div>
+  <div id="camWrap">
+    <div id="camBox">
+      <video id="video" playsinline muted autoplay></video>
+      <canvas id="testSrc" class="hidden"></canvas>
+      <canvas id="overlay"></canvas>
+      <div id="camMsg" class="hidden"></div>
+    </div>
+  </div>
+  <div class="row small">
+    <button id="alignBtn" class="btn ghost">Align corners</button>
+    <span id="status" class="muted"></span>
+  </div>
+  <div id="scores"></div>
+  <div class="dock">
+    <button id="scoreBtn" class="btn big primary">Score turn</button>
+    <div class="row">
+      <button id="undoBtn" class="btn">Undo</button>
+      <button id="passBtn" class="btn">Pass</button>
+      <button id="historyBtn" class="btn">History</button>
+      <button id="endBtn" class="btn">End</button>
+    </div>
+  </div>
+  <div id="flash" class="hidden"></div>
+</section>
+
+<!-- Sheets -->
+<section id="editor" class="sheet hidden">
+  <div class="sheetHead"><b id="edTitle"></b><select id="edPlayer"></select></div>
+  <p id="edHint" class="muted"></p>
+  <div id="edGrid" class="grid"></div>
+  <div id="edResult"></div>
+  <div id="keys"></div>
+  <div class="row">
+    <button id="edCancel" class="btn">Cancel</button>
+    <button id="edDelete" class="btn danger hidden">Delete turn</button>
+    <button id="edSave" class="btn primary">Save</button>
+  </div>
+</section>
+
+<section id="history" class="sheet hidden">
+  <div class="sheetHead"><b>History</b><button class="btn closeSheet">Close</button></div>
+  <p class="muted">Tap a turn to fix letters, tiles, blanks or who played it. Scores recalculate.</p>
+  <ol id="histList"></ol>
+</section>
+
+<section id="settings" class="sheet hidden">
+  <div class="sheetHead"><b>Settings</b><button class="btn closeSheet">Close</button></div>
+  <label>Vision API key (OpenAI or compatible)
+    <input id="apiKey" type="password" autocomplete="off" placeholder="sk-…"></label>
+  <label>Model <input id="model" placeholder="gpt-4.1-mini"></label>
+  <label>API base URL <input id="baseUrl" placeholder="https://api.openai.com/v1"></label>
+  <p class="muted">Stored only in this browser (localStorage). Images go straight from your phone to that API. Without a key the app still finds the new tiles; you type their letters.</p>
+  <button id="saveSettings" class="btn primary">Save</button>
+  <hr>
+  <button id="resetCorners" class="btn">Reset corners</button>
+  <button id="newGame" class="btn danger">New game</button>
+</section>
+
+<section id="endgame" class="sheet hidden">
+  <div class="sheetHead"><b>End of game</b><button class="btn closeSheet">Close</button></div>
+  <p class="muted">Type each player's leftover tiles (use ? for a blank). Pick who went out.</p>
+  <div id="racks"></div>
+  <label>Went out <select id="outPlayer"></select></label>
+  <button id="applyPenalty" class="btn primary">Apply</button>
+  <div id="final"></div>
+</section>
+<div id="toast" class="hidden"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
