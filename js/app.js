@@ -1,6 +1,7 @@
 import {SIZE, PREMIUM, scoreMove, replay, cellName, rackValue, gameStats, endGameAdjustments, consecutiveScoreless, rotateHistory} from './scoring.js';
 import {warp, cellFeatures, diffScores, pickNewCells, homography, applyH, packFeatures, unpackFeatures, rotCell, normalizeCorners, findRotation} from './geom.js';
 import {grabFrame, readCells, readBoard} from './vision.js';
+import {loadReader, warpGrid, readCell} from './reader.js';
 
 const $ = s => document.querySelector(s);
 const GKEY = 'scrabblecam.game.v1', SKEY = 'scrabblecam.settings.v1';
@@ -195,14 +196,34 @@ async function scoreTurn() {
       }));
       if (ex) game.rot = (K() + ex) % 4;
     }
-  } else note = 'No API key: type the letter for each highlighted tile. Words read the wrong way? Tap ⟳ Rotate.';
+  } else {
+    // On-device reader (default, free): classify the changed cells (or every free cell if there is no previous view)
+    $('#scoreBtn').textContent = 'Reading tiles…';
+    const model = await loadReader();
+    const grid = warpGrid(cap.frame, cap.corners);
+    let cand = cells.map(c => ({r: c.r, c: c.c}));
+    if (!cand.length) for (let i = 0; i < 225; i++) if (!occupied[i]) cand.push({r: Math.floor(i / 15), c: i % 15});
+    let reads = cand.map(c => ({...c, ...readCell(model, grid, c.r, c.c)}));
+    if (cells.length) reads = reads.map(x => (x.conf > Math.max(x.empty, x.blank) ? x : {...x, blank: 1})); // the diff says a tile is here: no readable letter => blank
+    else reads = reads.filter(x => x.empty < 0.3);
+    let ex = 0;
+    if (boardEmpty && reads.length) {
+      const votes = [0, 0, 0, 0]; reads.forEach(x => { if (x.blank < x.conf) votes[x.rot] += x.conf; });
+      ex = (4 - votes.indexOf(Math.max(...votes))) % 4;
+    }
+    placements = reads.map(x => ({...canonP(x.r, x.c, ex), letter: x.blank > x.conf ? '' : x.letter, blank: x.blank > x.conf, ...(x.blank <= x.conf && x.conf < 0.6 ? {low: true} : {})}));
+    if (ex) game.rot = (K() + ex) % 4;
+    const low = placements.filter(p => p.low);
+    if (low.length) note = 'Low confidence: ' + low.map(p => p.letter + '@' + cellName(p.r, p.c)).join(', ');
+  }
   if (!placements.length) {
     toast(baseline || hasKey ? 'No new tiles found. Check alignment, or tap squares to add them.' : 'Tap the squares where tiles were placed.', 4000);
   }
   const needsInput = !placements.length || placements.some(p => !p.letter);
   const res = scoreMove(st.board, placements);
   const entry = {type: 'play', player: st.current, placements};
-  if (!needsInput && res.valid) return commitPlay(entry, cap.feats, res);
+  if (!needsInput && res.valid) { commitPlay(entry, cap.feats, res); if (note) toast(note + ' — fix via History', 5000); return; }
+  note = '';
   if (!note) note = placements.some(p => p.blank && !p.letter) ? 'Blank tile: pick the letter it stands for (Blank stays on).' : (res.error || 'Check the tiles.');
   openEditor({entry, index: -1, note, onSave: e => commitPlay(e, cap.feats, scoreMove(state().board, e.placements))});
 }
@@ -223,6 +244,7 @@ function flash(name, res) {
 
 /* ---------------- Game screen ---------------- */
 function enterGame(fresh) {
+  loadReader().catch(e => toast('Could not load tile reader: ' + e.message));
   $('#setup').classList.add('hidden'); $('#game').classList.remove('hidden');
   const needAlign = fresh && !game.corners;
   render(); startCamera().then(() => { layoutCam(); if (fresh) setTimeout(() => { if (!state().board.flat().some(Boolean)) syncBaseline(); }, 1200); });
@@ -251,7 +273,7 @@ $('#passBtn').onclick = () => { const st = state(); if (!confirm(game.players[st
 
 function describe(e, t) {
   const n = game.players[e.player] ?? '';
-  if (e.type === 'play') return t?.result?.valid ? `${n}: ${t.result.words.map(w => w.word).join(', ')} +${t.result.total}` : `${n}: ⚠ ${t?.result?.error || 'invalid'}`;
+  if (e.type === 'play') return t?.result?.valid ? `${n}: ${t.result.words.map(w => w.word).join(', ')} +${t.result.total}${e.placements.some(p => p.low) ? ' ⚠ check' : ''}` : `${n}: ⚠ ${t?.result?.error || 'invalid'}`;
   if (e.type === 'pass') return `${n}: pass`;
   if (e.type === 'adjust') return `${n}: adjust ${e.delta > 0 ? '+' : ''}${e.delta}`;
   if (e.type === 'penalty') return `End of game: ${game.players.map((p, i) => `${p} ${(t?.deltas?.[i] ?? 0) >= 0 ? '+' : ''}${t?.deltas?.[i] ?? ''}`).join(', ')}`;

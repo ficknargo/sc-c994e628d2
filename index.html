@@ -77,11 +77,13 @@
 
 <section id="settings" class="sheet hidden">
   <div class="sheetHead"><b>Settings</b><button class="btn closeSheet">Close</button></div>
+  <p class="muted">Tiles are read on this phone — free, no account needed.</p>
+  <details><summary class="muted">Advanced: optional cloud vision API</summary>
   <label>Vision API key (OpenAI or compatible)
     <input id="apiKey" type="password" autocomplete="off" placeholder="sk-…"></label>
   <label>Model <input id="model" placeholder="gpt-4.1-mini"></label>
   <label>API base URL <input id="baseUrl" placeholder="https://api.openai.com/v1"></label>
-  <p class="muted">Stored only in this browser (localStorage). Images go straight from your phone to that API. Without a key the app still finds the new tiles; you type their letters.</p>
+  <p class="muted">Stored only in this browser (localStorage). Images go straight from your phone to that API. Leave empty to use the on-device reader.</p></details>
   <button id="saveSettings" class="btn primary">Save</button>
   <hr>
   <button id="resetCorners" class="btn">Reset corners</button>

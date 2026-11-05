@@ -167,3 +167,20 @@ export function rotateImage(img, k) {
   }
   return {width: w, height: h, data};
 }
+
+/** Box-filter downscale so the longest side is <= maxDim. */
+export function downscale(img, maxDim) {
+  const {width: W, height: H, data} = img, s = Math.min(1, maxDim / Math.max(W, H));
+  if (s === 1) return img;
+  const w = Math.round(W * s), h = Math.round(H * s), out = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.floor(y / s), y1 = Math.max(y0 + 1, Math.floor((y + 1) / s));
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.floor(x / s), x1 = Math.max(x0 + 1, Math.floor((x + 1) / s));
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let yy = y0; yy < y1 && yy < H; yy++) for (let xx = x0; xx < x1 && xx < W; xx++) { const i = (yy * W + xx) * 4; r += data[i]; g += data[i + 1]; b += data[i + 2]; n++; }
+      const o = (y * w + x) * 4; out[o] = r / n; out[o + 1] = g / n; out[o + 2] = b / n; out[o + 3] = 255;
+    }
+  }
+  return {width: w, height: h, data: out};
+}
