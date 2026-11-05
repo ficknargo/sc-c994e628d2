@@ -16,7 +16,33 @@ export const PREMIUM = (() => {
 export function emptyBoard() { return Array.from({length: SIZE}, () => Array(SIZE).fill(null)); }
 export function cloneBoard(b) { return b.map(row => row.map(c => (c ? {...c} : null))); }
 export function tileValue(t) { return t.blank ? 0 : (LETTER_VALUES[t.letter] || 0); }
-export function rackValue(str) { return [...(str || '').toUpperCase()].reduce((s, ch) => s + (LETTER_VALUES[ch] || 0), 0); }
+/** Leftover rack value: letters (A-Z, ? = blank 0) and/or numbers, summed. "QE?" -> 11, "12" -> 12, "Q 3" -> 13. */
+export function rackValue(str) {
+  str = String(str ?? '').toUpperCase();
+  const nums = (str.match(/\d+/g) || []).reduce((a, n) => a + parseInt(n, 10), 0);
+  return nums + [...str.replace(/\d+/g, '')].reduce((s, ch) => s + (LETTER_VALUES[ch] || 0), 0);
+}
+
+/** Official end-game adjustment: everyone loses own leftovers; the player who went out (or -1) gains everyone else's. */
+export function endGameAdjustments(racks, outPlayer) {
+  const vals = racks.map((r, i) => (i === outPlayer ? 0 : rackValue(r)));
+  const deltas = vals.map(v => -v);
+  if (outPlayer >= 0) deltas[outPlayer] = vals.reduce((a, b) => a + b, 0);
+  return {vals, deltas};
+}
+
+/** Number of consecutive scoreless turns (passes/exchanges or 0-point plays) at the end of history; adjustments ignored. */
+export function consecutiveScoreless(nPlayers, history) {
+  const {turns} = replay(nPlayers, history);
+  let n = 0;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t = turns[i];
+    if (t.type === 'adjust') continue;
+    if (t.type === 'pass' || (t.type === 'play' && !(t.result.valid && t.result.total > 0))) n++;
+    else break;
+  }
+  return n;
+}
 function isEmptyBoard(b) { return b.every(r => r.every(c => !c)); }
 const inb = (r, c) => r >= 0 && c >= 0 && r < SIZE && c < SIZE;
 
@@ -137,10 +163,9 @@ export function replay(nPlayers, history) {
     } else if (e.type === 'adjust') {
       scores[e.player] += e.delta; turns.push({...e});
     } else if (e.type === 'penalty') {
-      const vals = e.racks.map(rackValue);
-      vals.forEach((v, i) => { scores[i] -= v; });
-      if (e.outPlayer >= 0) scores[e.outPlayer] += vals.reduce((a, b) => a + b, 0);
-      turns.push({...e, vals});
+      const {vals, deltas} = endGameAdjustments(e.racks, e.outPlayer);
+      deltas.forEach((d, i) => { scores[i] += d; });
+      turns.push({...e, vals, deltas});
     }
   }
   return {board, scores, current, turns};
@@ -189,4 +214,11 @@ export function gameStats(nPlayers, history) {
     bestAverage: award(p => p.avgPerTurn, () => ''),
   };
   return {scores: g.scores, players: P, awards};
+}
+
+/** Rotate every placement in a history clockwise by k quarter-turns (scores unchanged: premium layout is 4-fold symmetric). */
+export function rotateHistory(history, k) {
+  k = ((k % 4) + 4) % 4;
+  const rot = (r, c) => { for (let i = 0; i < k; i++) [r, c] = [c, SIZE - 1 - r]; return [r, c]; };
+  return history.map(e => (e.type === 'play' ? {...e, placements: e.placements.map(p => { const [r, c] = rot(p.r, p.c); return {...p, r, c}; })} : e));
 }

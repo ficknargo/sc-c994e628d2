@@ -63,6 +63,7 @@
   <div id="keys"></div>
   <div class="row">
     <button id="edCancel" class="btn">Cancel</button>
+    <button id="edRotate" class="btn">⟳ Rotate</button>
     <button id="edDelete" class="btn danger hidden">Delete turn</button>
     <button id="edSave" class="btn primary">Save</button>
   </div>
@@ -90,9 +91,9 @@
 <section id="endgame" class="sheet hidden">
   <div class="sheetHead"><b>End of game &amp; stats</b><button class="btn closeSheet">Close</button></div>
   <div id="penaltyBox">
-    <p class="muted">Type each player's leftover tiles (use ? for a blank). Pick who went out.</p>
+    <label>Who went out? <select id="outPlayer"></select></label>
+    <p class="muted">Enter each other player's leftover tiles as letters (? = blank) or their point total. Each loses their own leftovers; whoever went out gains everyone else's.</p>
     <div id="racks"></div>
-    <label>Went out <select id="outPlayer"></select></label>
     <button id="applyPenalty" class="btn primary">Apply tile penalties</button>
   </div>
   <div id="final"></div>

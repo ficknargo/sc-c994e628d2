@@ -58,6 +58,20 @@ try:
         print('turn2 flash:', pg.inner_text('#flash').replace('\n', ' '))
         assert pg.is_hidden('#editor')
 
+        # Phone moved to the other side (90°), corners dragged in a shuffled order -> re-align picks the rotation
+        rf = meta['rotated'][0]
+        def set_corners(cs):
+            pg.evaluate("c => { window.scrabbleCam.game.corners = c; }", [{'x': x / W, 'y': y / H} for x, y in cs])
+        pg.click('#flash')
+        pg.evaluate(f"window.scrabbleCam.setFrame('test/fixtures/{rf['file']}.png')"); set_corners(rf['corners'])
+        pg.click('#alignBtn'); pg.click('#alignBtn'); time.sleep(0.2)
+        print('rotation after moving phone:', pg.evaluate('window.scrabbleCam.game.rot'), 'expected', (4 - rf['rot']) % 4)
+        assert pg.evaluate('window.scrabbleCam.game.rot') == (4 - rf['rot']) % 4
+        pg.screenshot(path='test/shots/2-rotated.png')
+        pg.evaluate("window.scrabbleCam.setFrame('test/fixtures/turn2.png')"); set_corners(meta['corners'])
+        pg.click('#alignBtn'); pg.click('#alignBtn'); time.sleep(0.2)
+        assert pg.evaluate('window.scrabbleCam.game.rot') == 0
+
         # Turn 3: includes a blank tile -> editor asks for its letter only
         frame_idx['k'] = 3; pg.evaluate("window.scrabbleCam.setFrame('test/fixtures/turn3.png')"); time.sleep(0.3)
         pg.click('#scoreBtn'); pg.wait_for_selector('#editor:not(.hidden)', timeout=10000)
@@ -74,8 +88,9 @@ try:
         print(pg.inner_text('#histList'))
         pg.click('#history .closeSheet')
         # stats before end: then apply penalties
-        pg.click('#endBtn'); pg.fill('#racks input[data-i="0"]', ''); pg.fill('#racks input[data-i="1"]', 'QE?')
-        pg.select_option('#outPlayer', '0'); pg.click('#applyPenalty'); time.sleep(0.2)
+        pg.click('#endBtn'); pg.select_option('#outPlayer', '0'); pg.fill('#racks input[data-i="1"]', 'QE?')
+        print('preview:', pg.inner_text('#racks').replace('\n', ' '))
+        pg.click('#applyPenalty'); time.sleep(0.2)
         print('final scores:', pg.evaluate('window.scrabbleCam.state().scores'))
         pg.screenshot(path='test/shots/5-stats.png', full_page=True)
         print(pg.inner_text('#final'))

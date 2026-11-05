@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {scoreMove, emptyBoard, applyPlacements, replay, rackValue, PREMIUM, gameStats} from '../js/scoring.js';
+import {scoreMove, emptyBoard, applyPlacements, replay, rackValue, PREMIUM, gameStats, endGameAdjustments, consecutiveScoreless} from '../js/scoring.js';
 
 const row = (r, c0, word, blanks = []) => [...word].map((l, i) => ({r, c: c0 + i, letter: l, blank: blanks.includes(i)})).filter(p => p.letter !== '_');
 const col = (c, r0, word, blanks = []) => [...word].map((l, i) => ({r: r0 + i, c, letter: l, blank: blanks.includes(i)})).filter(p => p.letter !== '_');
@@ -124,4 +124,31 @@ test('game stats + awards', () => {
   const s2 = gameStats(2, [{type: 'play', player: 0, placements: row(7, 1, 'RETAINS')}]); // (7,3) DL, (7,7) DW
   assert.equal(s2.players[0].bingos, 1); assert.equal(s2.players[0].bestBonusWord.bonus, 2);
   assert.equal(s2.awards.mostBonusInWord.detail, 'RETAINS');
+});
+
+test('end game: rack values from letters or numbers', () => {
+  assert.equal(rackValue('QE?'), 11); assert.equal(rackValue('12'), 12); assert.equal(rackValue('q 3'), 13); assert.equal(rackValue(''), 0);
+});
+
+test('end game: someone went out gets others\' leftovers (official rule)', () => {
+  const {deltas} = endGameAdjustments(['', 'QE', 'ZA?'], 0);  // 11 + 11
+  assert.deepEqual(deltas, [22, -11, -11]);
+  // whatever is typed for the player who went out is ignored
+  assert.deepEqual(endGameAdjustments(['X', '5'], 0).deltas, [5, -5]);
+});
+
+test('end game: nobody went out -> everyone just subtracts', () => {
+  assert.deepEqual(endGameAdjustments(['QE', '7', 'A'], -1).deltas, [-11, -7, -1]);
+  const g = replay(2, [{type: 'play', player: 0, placements: row(7, 7, 'CAT')}, {type: 'penalty', racks: ['E', '10'], outPlayer: -1}]);
+  assert.deepEqual(g.scores, [9, -10]);
+});
+
+test('consecutive scoreless turns (auto-end at 2x players)', () => {
+  const pass = p => ({type: 'pass', player: p});
+  const h = [{type: 'play', player: 0, placements: row(7, 7, 'CAT')}, pass(1), pass(2), {type: 'adjust', player: 0, delta: 3}, pass(0), pass(1), pass(2)];
+  assert.equal(consecutiveScoreless(3, h), 5);
+  h.push(pass(0)); assert.equal(consecutiveScoreless(3, h), 6); // 6 >= 2*3 -> prompt
+  // an invalid (0-point) play counts as scoreless; a scoring play resets
+  assert.equal(consecutiveScoreless(2, [pass(0), {type: 'play', player: 1, placements: row(2, 2, 'DOG')}]), 2);
+  assert.equal(consecutiveScoreless(2, [pass(0), {type: 'play', player: 1, placements: row(7, 7, 'CAT')}]), 0);
 });

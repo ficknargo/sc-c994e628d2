@@ -35,9 +35,10 @@ def find_coeffs(dst, src):
         A.append([x, y, 1, 0, 0, 0, -X*x, -X*y]); A.append([0, 0, 0, x, y, 1, -Y*x, -Y*y])
     return np.linalg.solve(np.array(A, float), np.array(src, float).reshape(8)).tolist()
 
-def photo(tiles, corners, size=(1280, 960), seed=0, bright=1.0):
+def photo(tiles, corners, size=(1280, 960), seed=0, bright=1.0, rot=0):
     rnd = random.Random(seed)
     flat = render_flat(tiles); S = flat.size[0]
+    for _ in range(rot): flat = flat.transpose(Image.ROTATE_270)  # clockwise quarter-turns = viewing from another side
     # board frame margin around the grid
     m = 40; framed = Image.new('RGB', (S+2*m, S+2*m), (120, 30, 35)); framed.paste(flat, (m, m))
     # map grid corners -> photo corners, extend to frame
@@ -75,5 +76,10 @@ if __name__ == '__main__':
         img.save(f'{out}/turn{k}.png')
         a = np.array(img.convert('RGBA')); a.tofile(f'{out}/turn{k}.rgba')
         meta.append({'file': f'turn{k}', 'w': img.size[0], 'h': img.size[1], 'tiles': [[r, c, l, b] for (r, c), (l, b) in sorted(s.items())]})
-    json.dump({'corners': corners, 'frames': meta}, open(f'{out}/meta.json', 'w'))
+    rotated = []
+    for rot in (1, 2, 3):   # turn-2 board seen from the other three sides, corners in shuffled order
+        img = photo(states[2], jitter(10 + rot), seed=20 + rot, bright=0.97, rot=rot)
+        name = f'turn2_rot{rot}'; img.save(f'{out}/{name}.png'); np.array(img.convert('RGBA')).tofile(f'{out}/{name}.rgba')
+        rotated.append({'file': name, 'rot': rot, 'w': img.size[0], 'h': img.size[1], 'corners': [corners[(i + rot) % 4] for i in (2, 0, 3, 1)]})
+    json.dump({'corners': corners, 'frames': meta, 'rotated': rotated}, open(f'{out}/meta.json', 'w'))
     print('ok')

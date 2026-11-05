@@ -66,9 +66,8 @@ export function cellFeatures(img) {
   const n = S * S, mean = sum / n, std = Math.sqrt(Math.max(1, sum2 / n - mean * mean));
   const cm = cs3.map(v => v / n + 1);
   const box = (I, x0, y0, x1, y1) => {
-    x0 = Math.max(0, Math.min(S, Math.round(x0))); x1 = Math.max(x0 + 1, Math.min(S, Math.round(x1)));
-    y0 = Math.max(0, Math.min(S, Math.round(y0))); y1 = Math.max(y0 + 1, Math.min(S, Math.round(y1)));
-    if (x1 > S) x1 = S; if (y1 > S) y1 = S;
+    x0 = Math.max(0, Math.min(S - 1, Math.round(x0))); x1 = Math.max(x0 + 1, Math.min(S, Math.round(x1)));
+    y0 = Math.max(0, Math.min(S - 1, Math.round(y0))); y1 = Math.max(y0 + 1, Math.min(S, Math.round(y1)));
     return (I[y1 * W1 + x1] - I[y0 * W1 + x1] - I[y1 * W1 + x0] + I[y0 * W1 + x0]) / ((x1 - x0) * (y1 - y0));
   };
   const cells = [];
@@ -124,3 +123,47 @@ export function pickNewCells(scores, occupied, {floor = 0.45, k = 6} = {}) {
 
 export function packFeatures(f) { return f.map(c => ({t: Array.from(c.tex, v => Math.round(v * 100)), c: c.col.map(v => Math.round(v * 1000))})); }
 export function unpackFeatures(p) { return p.map(c => ({tex: Float32Array.from(c.t, v => v / 100), col: c.c.map(v => v / 1000)})); }
+
+/* ---------- Orientation ---------- */
+/** One clockwise quarter-turn of grid coords, k times. */
+export function rotCell(r, c, k, n = N) {
+  k = ((k % 4) + 4) % 4;
+  for (let i = 0; i < k; i++) [r, c] = [c, n - 1 - r];
+  return [r, c];
+}
+/** Put 4 corners (any order) into clockwise order starting with the top-left-most (min x+y). Removes mirror ambiguity. */
+export function normalizeCorners(pts) {
+  const cx = pts.reduce((s, p) => s + p.x, 0) / 4, cy = pts.reduce((s, p) => s + p.y, 0) / 4;
+  const cw = [...pts].sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx)); // y-down => clockwise
+  let s = 0; cw.forEach((p, i) => { if (p.x + p.y < cw[s].x + cw[s].y) s = i; });
+  return [...cw.slice(s), ...cw.slice(0, s)];
+}
+/** Rotate a full-board feature set clockwise by d quarter-turns (cell positions and in-cell textures). */
+export function rotateFeatures(F, d) {
+  d = ((d % 4) + 4) % 4; if (!d) return F;
+  const out = new Array(F.length);
+  F.forEach((f, i) => {
+    const [r, c] = rotCell(Math.floor(i / N), i % N, d);
+    const tex = new Float32Array(G * G);
+    for (let y = 0; y < G; y++) for (let x = 0; x < G; x++) { const [ty, tx] = rotCell(y, x, d, G); tex[ty * G + tx] = f.tex[y * G + x]; }
+    out[r * N + c] = {tex, col: f.col};
+  });
+  return out;
+}
+/** Which clockwise rotation d of the old view best matches the new view? (premium layout is symmetric, so tiles decide) */
+export function findRotation(oldF, newF) {
+  const costs = [0, 1, 2, 3].map(d => diffScores(rotateFeatures(oldF, d), newF).reduce((a, b) => a + b, 0));
+  const d = costs.indexOf(Math.min(...costs));
+  return {d, costs};
+}
+/** Rotate an RGBA image clockwise by k quarter-turns (square or not). */
+export function rotateImage(img, k) {
+  k = ((k % 4) + 4) % 4; if (!k) return img;
+  let {width: w, height: h, data} = img;
+  for (let t = 0; t < k; t++) {
+    const out = new Uint8ClampedArray(data.length);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const o = (x * h + (h - 1 - y)) * 4, i = (y * w + x) * 4; out[o] = data[i]; out[o + 1] = data[i + 1]; out[o + 2] = data[i + 2]; out[o + 3] = data[i + 3]; }
+    data = out; [w, h] = [h, w];
+  }
+  return {width: w, height: h, data};
+}

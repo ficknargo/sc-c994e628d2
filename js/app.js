@@ -1,5 +1,5 @@
-import {SIZE, PREMIUM, scoreMove, replay, cellName, rackValue, gameStats} from './scoring.js';
-import {warp, cellFeatures, diffScores, pickNewCells, homography, applyH, packFeatures, unpackFeatures} from './geom.js';
+import {SIZE, PREMIUM, scoreMove, replay, cellName, rackValue, gameStats, endGameAdjustments, consecutiveScoreless, rotateHistory} from './scoring.js';
+import {warp, cellFeatures, diffScores, pickNewCells, homography, applyH, packFeatures, unpackFeatures, rotCell, normalizeCorners, findRotation} from './geom.js';
 import {grabFrame, readCells, readBoard} from './vision.js';
 
 const $ = s => document.querySelector(s);
@@ -85,6 +85,10 @@ function defaultCorners() {
   game.corners = [[x0, y0], [x0 + side, y0], [x0 + side, y0 + side], [x0, y0 + side]].map(([x, y]) => ({x: x / w, y: y / h}));
 }
 function cornersPx(w, h) { return game.corners.map(p => ({x: p.x * w, y: p.y * h})); }
+// Orientation: canonical board cell = rotCell(view cell, game.rot); view = rotCell(canon, 4 - rot)
+const K = () => game.rot || 0;
+const toCanon = (r, c) => rotCell(r, c, K());
+const toView = (r, c) => rotCell(r, c, 4 - K());
 
 function drawOverlay() {
   const ctx = overlay.getContext('2d'), W = overlay.width, H = overlay.height;
@@ -98,7 +102,8 @@ function drawOverlay() {
   }
   // mark tiles already scored so misalignment is obvious
   const st = state(); ctx.fillStyle = 'rgba(126,224,129,.35)';
-  for (let r = 0; r < 15; r++) for (let c = 0; c < 15; c++) if (st.board[r][c]) {
+  for (let R = 0; R < 15; R++) for (let C = 0; C < 15; C++) if (st.board[R][C]) {
+    const [r, c] = toView(R, C);
     const pts = [[c, r], [c + 1, r], [c + 1, r + 1], [c, r + 1]].map(([x, y]) => applyH(Hm, x, y));
     ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.fill();
   }
@@ -125,7 +130,7 @@ $('#alignBtn').onclick = () => {
   aligning = !aligning;
   $('#alignBtn').textContent = aligning ? 'Done aligning' : 'Align corners';
   $('#status').textContent = aligning ? 'Drag the 4 dots onto the outer corners of the 15×15 grid' : '';
-  if (!aligning) { syncBaseline(); saveGame(); }
+  if (!aligning) { realign(); saveGame(); }
   drawOverlay();
 };
 
@@ -135,6 +140,19 @@ function capture() {
   const corners = cornersPx(frame.width, frame.height);
   const feats = cellFeatures(warp(frame, corners, 600));
   return {frame, corners, feats};
+}
+function realign() {
+  // corners may have been dragged in any order: make them clockwise from top-left (no mirror)
+  const {w, h} = srcSize();
+  if (w) game.corners = normalizeCorners(cornersPx(w, h)).map(p => ({x: p.x / w, y: p.y / h}));
+  const hasTiles = state().board.flat().some(Boolean);
+  if (baseline && hasTiles && w) {
+    // phone may now be on another side: pick the rotation that best matches the stored board
+    const feats = capture().feats, {d} = findRotation(baseline, feats);
+    if (d) { game.rot = (K() - d + 4) % 4; toast('Board orientation updated (' + d * 90 + '°)'); }
+    baseline = feats; $('#status').textContent = 'Board synced ✓';
+  } else syncBaseline();
+  drawOverlay();
 }
 function syncBaseline() { // the board as seen now == app's board
   try { if (srcSize().w) { baseline = capture().feats; $('#status').textContent = 'Board synced ✓'; } } catch (e) { console.warn(e); }
@@ -150,25 +168,34 @@ $('#scoreBtn').onclick = async () => {
 };
 
 async function scoreTurn() {
-  const cap = capture(), st = state(), occupied = st.board.flat().map(Boolean);
+  const cap = capture(), st = state(), boardEmpty = !st.board.flat().some(Boolean);
+  const occupied = Array.from({length: 225}, (_, i) => { const [r, c] = toCanon(Math.floor(i / 15), i % 15); return !!st.board[r][c]; }); // view-indexed
   const hasKey = !!settings.apiKey;
-  let cells = [];
+  let cells = []; // view coords
   if (baseline) cells = pickNewCells(diffScores(baseline, cap.feats), occupied).cells;
-  let placements = cells.map(c => ({r: c.r, c: c.c, letter: '', blank: false}));
+  const canonP = (r, c, extra) => { const [R, C] = rotCell(...toCanon(r, c), extra || 0); return {r: R, c: C}; };
+  let placements = cells.map(c => ({...canonP(c.r, c.c), letter: '', blank: false}));
   let note = '';
   if (hasKey) {
     const cfg = {apiKey: settings.apiKey, model: settings.model || 'gpt-4.1-mini', baseUrl: settings.baseUrl};
     if (cells.length) {
       if (TEST) window.__lastCells = cells.map(c => [c.r, c.c]);
-      const letters = await readCells(cfg, cap.frame, cap.corners, cells);
-      placements = cells.map((c, i) => ({r: c.r, c: c.c, letter: letters[i] === '?' ? '' : letters[i], blank: letters[i] === '?', _drop: !letters[i]})).filter(p => !p._drop);
+      const {letters, extra} = await readCells(cfg, cap.frame, cap.corners, cells, K());
+      const ex = boardEmpty ? extra : 0;  // first word decides which way is "up"; later turns keep the stored orientation
+      placements = cells.map((c, i) => ({...canonP(c.r, c.c, ex), letter: letters[i] === '?' ? '' : letters[i], blank: letters[i] === '?', _drop: !letters[i]})).filter(p => !p._drop).map(({_drop, ...p}) => p);
+      if (ex) game.rot = (K() + ex) % 4;
     } else {
       const known = st.board.map(row => row.map(t => t ? t.letter : '.').join(''));
-      const rows = await readBoard(cfg, cap.frame, cap.corners, known);
+      const {rows, extra} = await readBoard(cfg, cap.frame, cap.corners, known, K());
+      const ex = boardEmpty ? extra : 0;
       placements = [];
-      rows.forEach((row, r) => [...row].forEach((ch, c) => { if (!occupied[r * 15 + c] && /[A-Z?]/.test(ch)) placements.push({r, c, letter: ch === '?' ? '' : ch, blank: ch === '?'}); }));
+      rows.forEach((row, r0) => [...row].forEach((ch, c0) => {
+        const [r, c] = rotCell(r0, c0, ex);
+        if (!st.board[r][c] && /[A-Z?]/.test(ch)) placements.push({r, c, letter: ch === '?' ? '' : ch, blank: ch === '?'});
+      }));
+      if (ex) game.rot = (K() + ex) % 4;
     }
-  } else note = 'No API key: type the letter for each highlighted tile.';
+  } else note = 'No API key: type the letter for each highlighted tile. Words read the wrong way? Tap ⟳ Rotate.';
   if (!placements.length) {
     toast(baseline || hasKey ? 'No new tiles found. Check alignment, or tap squares to add them.' : 'Tap the squares where tiles were placed.', 4000);
   }
@@ -183,7 +210,7 @@ async function scoreTurn() {
 function commitPlay(entry, feats, res) {
   entry.summary = {total: res.total, bingo: res.bingo, bonusSquares: res.bonusSquares, words: res.words.map(w => ({word: w.word, score: w.score, bonus: w.bonus}))};
   entry.baselineBefore = baseline ? packFeatures(baseline) : null;
-  game.history.push(entry); baseline = feats; saveGame(); render();
+  game.history.push(entry); baseline = feats; saveGame(); render(); checkAutoEnd();
   flash(game.players[entry.player], res);
 }
 
@@ -220,14 +247,14 @@ $('#undoBtn').onclick = () => {
   if (e.type === 'play') baseline = e.baselineBefore ? unpackFeatures(e.baselineBefore) : null;
   saveGame(); render(); toast('Undone. Leave/restore tiles, then Score turn again.');
 };
-$('#passBtn').onclick = () => { const st = state(); if (!confirm(game.players[st.current] + ' passes / exchanges?')) return; game.history.push({type: 'pass', player: st.current}); saveGame(); render(); };
+$('#passBtn').onclick = () => { const st = state(); if (!confirm(game.players[st.current] + ' passes / exchanges?')) return; game.history.push({type: 'pass', player: st.current}); saveGame(); render(); checkAutoEnd(); };
 
 function describe(e, t) {
   const n = game.players[e.player] ?? '';
   if (e.type === 'play') return t?.result?.valid ? `${n}: ${t.result.words.map(w => w.word).join(', ')} +${t.result.total}` : `${n}: ⚠ ${t?.result?.error || 'invalid'}`;
   if (e.type === 'pass') return `${n}: pass`;
   if (e.type === 'adjust') return `${n}: adjust ${e.delta > 0 ? '+' : ''}${e.delta}`;
-  if (e.type === 'penalty') return `End-game tiles: ${game.players.map((p, i) => `${p} −${t?.vals?.[i] ?? ''}`).join(', ')}`;
+  if (e.type === 'penalty') return `End of game: ${game.players.map((p, i) => `${p} ${(t?.deltas?.[i] ?? 0) >= 0 ? '+' : ''}${t?.deltas?.[i] ?? ''}`).join(', ')}`;
   return e.type;
 }
 
@@ -298,6 +325,14 @@ $('#keys').onclick = e => {
   }
   renderEditor();
 };
+$('#edRotate').onclick = () => {
+  // relabel the whole board a quarter-turn clockwise (scores unchanged), and keep the camera mapping consistent
+  game.history = rotateHistory(game.history, 1); game.rot = (K() + 1) % 4;
+  ed.entry.placements = rotateHistory([ed.entry], 1)[0].placements;
+  if (ed.sel) { const [r, c] = rotCell(ed.sel.r, ed.sel.c, 1); ed.sel = {r, c}; }
+  ed.board = replay(game.players.length, ed.index >= 0 ? game.history.slice(0, ed.index) : game.history).board;
+  saveGame(); render(); renderEditor();
+};
 $('#edPlayer').onchange = e => { ed.entry.player = +e.target.value; };
 $('#edCancel').onclick = () => { $('#editor').classList.add('hidden'); ed = null; };
 $('#edDelete').onclick = () => { if (!confirm('Delete this turn?')) return; game.history.splice(ed.index, 1); saveGame(); render(); $('#editor').classList.add('hidden'); $('#historyBtn').click(); };
@@ -309,17 +344,32 @@ $('#edSave').onclick = () => {
 };
 
 /* ---------------- End game ---------------- */
-$('#endBtn').onclick = () => {
+function checkAutoEnd() {
+  const n = game.players.length, k = consecutiveScoreless(n, game.history);
+  if (k >= 2 * n && !game.history.some(e => e.type === 'penalty') && confirm(`${k} scoreless turns in a row — end the game?`)) openEnd(-1);
+}
+function openEnd(defaultOut) {
   $('#penaltyBox').classList.toggle('hidden', game.history.some(e => e.type === 'penalty'));
-  $('#racks').innerHTML = game.players.map((p, i) => `<label>${esc(p)} <input data-i="${i}" placeholder="e.g. QE?" autocapitalize="characters"></label>`).join('');
-  $('#outPlayer').innerHTML = '<option value="-1">Nobody</option>' + game.players.map((p, i) => `<option value="${i}">${esc(p)}</option>`).join('');
-  showFinal(); $('#endgame').classList.remove('hidden');
-};
+  $('#racks').innerHTML = game.players.map((p, i) => `<label>${esc(p)} <input data-i="${i}" placeholder="tiles (QE?) or points" autocapitalize="characters"><span class="rv" data-i="${i}">0</span></label>`).join('');
+  $('#outPlayer').innerHTML = game.players.map((p, i) => `<option value="${i}">${esc(p)}</option>`).join('') + '<option value="-1">Nobody — all passed</option>';
+  $('#outPlayer').value = String(defaultOut ?? 0);
+  updateRacks(); showFinal(); $('#endgame').classList.remove('hidden');
+}
+function updateRacks() {
+  const out = +$('#outPlayer').value, inputs = [...$('#racks').querySelectorAll('input')];
+  inputs.forEach((inp, i) => { inp.disabled = i === out; if (i === out) inp.value = ''; });
+  const {deltas} = endGameAdjustments(inputs.map(i => i.value), out);
+  $('#racks').querySelectorAll('.rv').forEach((el, i) => { el.textContent = (deltas[i] >= 0 ? '+' : '') + deltas[i]; });
+}
+$('#racks').oninput = updateRacks;
+$('#outPlayer').onchange = updateRacks;
+$('#endBtn').onclick = () => openEnd(0);
 $('#applyPenalty').onclick = () => {
-  const racks = [...$('#racks').querySelectorAll('input')].map(i => i.value.toUpperCase().replace(/[^A-Z?]/g, ''));
+  const racks = [...$('#racks').querySelectorAll('input')].map(i => i.value.toUpperCase().trim());
   const out = +$('#outPlayer').value;
   game.history.push({type: 'penalty', racks, outPlayer: out}); saveGame(); render(); showFinal(); $('#penaltyBox').classList.add('hidden');
-  toast(racks.map((r, i) => `${game.players[i]} −${rackValue(r)}`).join(', '));
+  const {deltas} = endGameAdjustments(racks, out);
+  toast(deltas.map((d, i) => `${game.players[i]} ${d >= 0 ? '+' : ''}${d}`).join(', '));
 };
 function showFinal() {
   const st = gameStats(game.players.length, game.history), name = i => esc(game.players[i]);

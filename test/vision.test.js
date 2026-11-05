@@ -3,7 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {warp, cellFeatures, diffScores, pickNewCells, homography, applyH, packFeatures, unpackFeatures} from '../js/geom.js';
+import {warp, cellFeatures, diffScores, pickNewCells, homography, applyH, packFeatures, unpackFeatures, rotCell, normalizeCorners, rotateFeatures, findRotation, rotateImage} from '../js/geom.js';
+import {rotateHistory, replay} from '../js/scoring.js';
 
 const dir = new URL('./fixtures/', import.meta.url);
 const have = fs.existsSync(new URL('meta.json', dir));
@@ -30,5 +31,51 @@ test('diff finds exactly the new tiles each turn', {skip: !have && 'no fixtures'
       assert.deepEqual(got, want, f.file);
     }
     prev = feats; prevTiles = tiles;
+  }
+});
+
+test('rotCell / rotateImage / rotateFeatures agree', () => {
+  assert.deepEqual(rotCell(0, 0, 1), [0, 14]); assert.deepEqual(rotCell(0, 14, 1), [14, 14]); assert.deepEqual(rotCell(3, 5, 4), [3, 5]);
+  assert.deepEqual(rotCell(...rotCell(2, 9, 1), 3), [2, 9]);
+  const img = {width: 3, height: 2, data: new Uint8ClampedArray([1,0,0,0, 2,0,0,0, 3,0,0,0, 4,0,0,0, 5,0,0,0, 6,0,0,0])};
+  const r = rotateImage(img, 1); // [[1,2,3],[4,5,6]] -> [[4,1],[5,2],[6,3]]
+  assert.equal(r.width, 2); assert.deepEqual([...r.data].filter((_, i) => i % 4 === 0), [4, 1, 5, 2, 6, 3]);
+  // features of a rotated image == rotated features of the image (positions)
+  const sq = {width: 150, height: 150, data: new Uint8ClampedArray(150 * 150 * 4).map((_, i) => (i % 4 === 3 ? 255 : (i * 7919) % 251))};
+  const a = rotateFeatures(cellFeatures(sq), 1), b = cellFeatures(rotateImage(sq, 1));
+  const d = diffScores(a, b); assert.ok(Math.max(...d) < 0.05, 'max diff ' + Math.max(...d));
+});
+
+test('normalizeCorners: any drag order -> clockwise from top-left', () => {
+  const q = [{x: 10, y: 10}, {x: 100, y: 12}, {x: 98, y: 90}, {x: 8, y: 95}];
+  for (const order of [[0,1,2,3], [2,0,3,1], [3,2,1,0], [1,3,0,2]]) assert.deepEqual(normalizeCorners(order.map(i => q[i])), q);
+});
+
+test('rotateHistory keeps scores (symmetric premiums) and four turns = identity', () => {
+  const h = [{type: 'play', player: 0, placements: [{r: 7, c: 7, letter: 'C'}, {r: 7, c: 8, letter: 'A'}, {r: 7, c: 9, letter: 'T'}]},
+             {type: 'play', player: 1, placements: [{r: 8, c: 8, letter: 'O'}, {r: 8, c: 9, letter: 'X'}]}];
+  for (const k of [1, 2, 3]) assert.deepEqual(replay(2, rotateHistory(h, k)).scores, replay(2, h).scores);
+  assert.deepEqual(rotateHistory(rotateHistory(h, 1), 3), h);
+  assert.equal(replay(2, rotateHistory(h, 1)).board[7][7].letter, 'C'); // centre stays
+  assert.equal(replay(2, rotateHistory(h, 1)).board[9][7].letter, 'T'); // CAT now reads down
+});
+
+test('auto-align: phone moved to another side, corners dragged in any order -> stored board stays consistent', {skip: !have && 'no fixtures'}, () => {
+  const meta = JSON.parse(fs.readFileSync(new URL('meta.json', dir)));
+  const load = (f, corners) => cellFeatures(warp({width: f.w, height: f.h, data: new Uint8ClampedArray(fs.readFileSync(new URL(f.file + '.rgba', dir)))}, normalizeCorners(corners.map(([x, y]) => ({x, y}))), 600));
+  const base = load(meta.frames[2], meta.corners);              // view with k = 0 (canon == view)
+  const canonTiles = new Set(meta.frames[2].tiles.map(([r, c]) => r * 15 + c));
+  for (const f of meta.rotated) {
+    const cur = load(f, f.corners);
+    const {d, costs} = findRotation(base, cur);
+    assert.equal(d, f.rot, `${f.file}: costs ${costs.map(c => c.toFixed(0))}`);
+    const kNew = (0 - d + 4) % 4;                                // canon = rotCW^kNew(view)
+    // re-synced baseline in the new view: diff vs a later frame maps to the right canonical cells. Check mapping of tiles:
+    const viewTiles = [...canonTiles].map(i => rotCell(Math.floor(i / 15), i % 15, (4 - kNew) % 4));
+    for (const [r, c] of viewTiles) assert.deepEqual(rotCell(r, c, kNew).join(), rotCell(...rotCell(r, c, kNew), 0).join());
+    // and the new view really has tiles where we expect them: those cells differ most from the un-rotated empty layout
+    const empty = load(meta.frames[0], meta.corners);
+    const sc = diffScores(empty, cur); const top = sc.map((s, i) => [s, i]).sort((a, b) => b[0] - a[0]).slice(0, viewTiles.length).map(x => x[1]).sort((a, b) => a - b);
+    assert.deepEqual(top, viewTiles.map(([r, c]) => r * 15 + c).sort((a, b) => a - b), f.file);
   }
 });
